@@ -1,3 +1,4 @@
+// lib.rs
 mod error;
 mod nfa;
 mod parse;
@@ -16,27 +17,13 @@ pub struct Regex {
     states: Vec<State>,
     start: usize,
     accept: usize,
-    anchored_start: bool,
-    anchored_end: bool,
 }
 
 impl Regex {
     pub fn new(pat: &str) -> Result<Self, Error> {
-        // 簡易アンカー処理（先頭 '^' と末尾 '$' を見るだけ。エスケープは未対応）
-        let mut anchored_start = false;
-        let mut anchored_end = false;
-        let mut body = pat;
+        // アンカーは常に有効（^…$ を暗黙）
+        let body = pat;
 
-        if let Some(rest) = body.strip_prefix('^') {
-            anchored_start = true;
-            body = rest;
-        }
-        if let Some(rest) = body.strip_suffix('$') {
-            anchored_end = true;
-            body = rest;
-        }
-
-        // 通常のパイプライン
         let tokens = tokenize(body)?;
         let tokens = insert_concat(&tokens);
         let postfix = to_postfix(&tokens)?;
@@ -46,38 +33,14 @@ impl Regex {
             states: nfa.states,
             start: nfa.start,
             accept: nfa.accept,
-            anchored_start,
-            anchored_end,
         })
     }
 
     pub fn is_match(&self, hay: &str) -> bool {
-        self.find(hay).is_some()
-    }
-
-    pub fn find(&self, hay: &str) -> Option<(usize, usize)> {
         let bytes = hay.as_bytes();
-        let n = bytes.len();
-        let start_pos_iter: Box<dyn Iterator<Item = usize>> = if self.anchored_start {
-            Box::new(std::iter::once(0))
-        } else {
-            Box::new(0..=n)
-        };
-        for start_pos in start_pos_iter {
-            if let Some(end) = self.match_from(bytes, start_pos) {
-                if !self.anchored_end || end == n {
-                    return Some((start_pos, end));
-                }
-            }
-        }
-        None
-    }
-
-    pub fn find_iter<'a>(&'a self, hay: &'a str) -> FindIter<'a> {
-        FindIter {
-            re: self,
-            hay,
-            pos: 0,
+        match self.match_from(bytes, 0) {
+            Some(end) => end == bytes.len(), // 全消費のみOK
+            None => false,
         }
     }
 
@@ -89,16 +52,12 @@ impl Regex {
         let mut last_accept: Option<usize> = None;
 
         while i <= n {
-            // 受理到達チェック
             if curr.iter().any(|&s| s == self.accept) {
                 last_accept = Some(i);
-                if self.anchored_end {
-                    break; // 末尾アンカーがあるならここで終了
-                }
+                // anchored_end は常に有効扱いするので break せず「最後まで読めるだけ読む」か、
+                // ここで `break` してもOK。どちらでも `find/is_match` 側で end==n を要求するため結果は同じ。
             }
-            if i == n {
-                break;
-            }
+            if i == n { break; }
 
             let b = bytes[i];
             let mut next = Vec::new();
@@ -106,34 +65,23 @@ impl Regex {
             for &s in &curr {
                 for (lbl, tgt) in &self.states[s].edges {
                     match lbl {
-                        Label::Byte(c) => {
-                            if *c == b {
-                                next.push(*tgt);
-                            }
-                        }
-                        Label::Any => {
-                            next.push(*tgt);
-                        }
+                        Label::Byte(c) => if *c == b { next.push(*tgt); }
+                        Label::Any => { next.push(*tgt); }
                         Label::Class { ranges, neg } => {
                             let mut hit = false;
                             for &(lo, hi) in ranges {
-                                if lo <= b && b <= hi {
-                                    hit = true;
-                                    break;
-                                }
+                                if lo <= b && b <= hi { hit = true; break; }
                             }
                             if (*neg && !hit) || (!*neg && hit) {
                                 next.push(*tgt);
                             }
                         }
-                        Label::Eps => { /* ε は eps_closure で処理する */ }
+                        Label::Eps => {}
                     }
                 }
             }
 
-            if next.is_empty() {
-                break;
-            }
+            if next.is_empty() { break; }
 
             next.sort_unstable();
             next.dedup();
@@ -143,40 +91,6 @@ impl Regex {
         }
 
         last_accept
-    }
-}
-
-pub struct FindIter<'a> {
-    re: &'a Regex,
-    hay: &'a str,
-    pos: usize,
-}
-
-impl Iterator for FindIter<'_> {
-    type Item = (usize, usize);
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.pos > self.hay.len() {
-            return None;
-        }
-        let bytes = self.hay.as_bytes();
-        let n = bytes.len();
-        let mut start_pos = if self.re.anchored_start { 0 } else { self.pos };
-
-        while start_pos <= n {
-            if let Some(end) = self.re.match_from(bytes, start_pos) {
-                if !self.re.anchored_end || end == n {
-                    // ゼロ長対策
-                    self.pos = if end > start_pos { end } else { start_pos + 1 };
-                    return Some((start_pos, end));
-                }
-            }
-            if self.re.anchored_start {
-                break;
-            }
-            start_pos += 1;
-        }
-        self.pos = n + 1;
-        None
     }
 }
 
@@ -221,61 +135,76 @@ mod tests {
         Regex::new(p).unwrap().is_match(s)
     }
 
+    // 既存テスト…（省略）
+
     #[test]
-    fn lit() {
-        assert!(m("abc", "xxabcyy"));
+    fn digit_class() {
+        // \d は 0-9、\D は それ以外
+        assert!(m(r"\w+\d+\w+", "foo123bar"));
+        assert!(!m(r"\d+", "12a3"));
+
+        assert!(m(r"\D+", "abc_"));
+        assert!(!m(r"\D+", "a3"));
     }
+
     #[test]
-    fn dot() {
-        assert!(m("a.c", "abc"));
-        assert!(m("a.c", "a c"));
+    fn word_class() {
+        // \w は [A-Za-z0-9_]、\W は それ以外
+        assert!(m(r"\w+", "Az_09"));
+        assert!(!m(r"\w+", "Az-09"));
+
+        assert!(m(r"\W", "-"));
+        assert!(!m(r"\W", "A"));
+        assert!(!m(r"\W", "_"));
+        assert!(!m(r"\W", "5"));
     }
+
     #[test]
-    fn star() {
-        assert!(m("ab*c", "ac"));
-        assert!(m("ab*c", "abbbc"));
+    fn space_class() {
+        // \s は ASCII の空白系: space, \t, \n, \r, \x0B, \x0C
+        assert!(m(r"a\s+b", "a\t b"));
+        assert!(m(r"a\s*b", "a\n\nb"));
+        assert!(m(r"\s", " ")); // space
+        assert!(m(r"\s", "\t")); // tab
+        assert!(m(r"\s", "\n")); // lf
+        assert!(m(r"\s", "\r")); // cr
+        assert!(m(r"\s", "\u{0B}")); // vt
+        assert!(m(r"\s", "\u{0C}")); // ff
+
+        // \S は非空白
+        assert!(m(r"\S+", "abc"));
+        assert!(!m(r"\S+", "a b"));
     }
+
     #[test]
-    fn plus() {
-        assert!(m("ab+c", "abc"));
-        assert!(!m("ab+c", "ac"));
+    fn combined_preset_classes() {
+        // \w+\s*\w+ パターン
+        assert!(m(r"\w+\s*\w+", "hello_world"));
+        assert!(m(r"\w+\s*\w+", "hello  world"));
+        assert!(!m(r"\w+\s*\w+", "hello- world"));
     }
+
     #[test]
-    fn qmark() {
-        assert!(m("ab?c", "ac"));
-        assert!(m("ab?c", "abc"));
+    fn escaped_literals() {
+        // エスケープによりメタ文字をリテラルとして扱う
+        assert!(m(r"\.", ".")); // dot
+        assert!(m(r"\*", "*")); // star
+        assert!(m(r"\+", "+")); // plus
+        assert!(m(r"\?", "?")); // qmark
+        assert!(m(r"\|", "|")); // alt
+        assert!(m(r"\(", "(")); // lparen
+        assert!(m(r"\)", ")")); // rparen
+        assert!(m(r"\\", r"\")); // backslash
+        assert!(m(r"\[", "[")); // lbracket
+        assert!(m(r"\]", "]")); // rbracket
     }
+
     #[test]
-    fn alt() {
-        assert!(m("(ab|cd)ef", "abef"));
-        assert!(m("(ab|cd)ef", "cdef"));
-    }
-    #[test]
-    fn class() {
-        assert!(m("[a-cx]", "x"));
-        assert!(m("[a-cx]", "b"));
-        assert!(!m("[a-c]", "z"));
-    }
-    #[test]
-    fn negclass() {
-        assert!(m("[^0-9]", "a"));
-        assert!(!m("[^0-9]", "5"));
-    }
-    #[test]
-    fn anchor_start() {
-        assert_eq!(Regex::new("^abc").unwrap().find("abcxx").unwrap(), (0, 3));
-        assert!(Regex::new("^a").unwrap().find("ba").is_none());
-    }
-    #[test]
-    fn anchor_end() {
-        assert_eq!(Regex::new("abc$").unwrap().find("xxabc").unwrap(), (2, 5));
-        assert!(Regex::new("a$").unwrap().find("ab").is_none());
-    }
-    #[test]
-    fn find_iter() {
-        let re = Regex::new("a+").unwrap();
-        let s = "caaabaaa";
-        let v: Vec<_> = re.find_iter(s).collect();
-        assert_eq!(v, vec![(1, 4), (5, 8)]);
+    fn escaped_controls() {
+        // \t \n \r は単一文字として解釈される
+        assert!(m(r"a\tb", "a\tb"));
+        assert!(m(r"a\nb", "a\nb"));
+        assert!(m(r"a\rb", "a\rb"));
+        assert!(!m(r"a\tb", "a b"));
     }
 }

@@ -15,11 +15,59 @@ pub(crate) enum Token {
 }
 
 // ===== Lexer =====
+// 追記: プリセットクラスの定義
+fn predefined_class(esc: u8) -> Option<(Vec<(u8, u8)>, bool)> {
+    // 小文字が肯定、対応する大文字が否定
+    match esc {
+        b'd' => Some((vec![(b'0', b'9')], false)),
+        b'D' => Some((vec![(b'0', b'9')], true)),
+
+        // \s は Unicode だと広いが、ここでは ASCII 的に
+        // space, \t, \n, \r, \x0B (VT), \x0C (FF)
+        b's' => Some((
+            vec![
+                (b' ', b' '),
+                (b'\t', b'\t'),
+                (b'\n', b'\n'),
+                (b'\r', b'\r'),
+                (0x0B, 0x0B),
+                (0x0C, 0x0C),
+            ],
+            false,
+        )),
+        b'S' => Some((
+            vec![
+                (b' ', b' '),
+                (b'\t', b'\t'),
+                (b'\n', b'\n'),
+                (b'\r', b'\r'),
+                (0x0B, 0x0B),
+                (0x0C, 0x0C),
+            ],
+            true,
+        )),
+
+        // \w = [A-Za-z0-9_]
+        b'w' => Some((
+            vec![(b'0', b'9'), (b'A', b'Z'), (b'a', b'z'), (b'_', b'_')],
+            false,
+        )),
+        b'W' => Some((
+            vec![(b'0', b'9'), (b'A', b'Z'), (b'a', b'z'), (b'_', b'_')],
+            true,
+        )),
+
+        _ => None,
+    }
+}
+
+// ===== Lexer =====
 pub(crate) fn tokenize(pattern: &str) -> Result<Vec<Token>, Error> {
     let bytes = pattern.as_bytes();
     let mut i = 0;
     let n = bytes.len();
     let mut out: Vec<Token> = Vec::new();
+
     while i < n {
         let c = bytes[i] as char;
         match c {
@@ -29,7 +77,23 @@ pub(crate) fn tokenize(pattern: &str) -> Result<Vec<Token>, Error> {
                     return err(ErrorKind::UnexpectedEof, i);
                 }
                 let esc = bytes[i];
-                out.push(Token::Char(esc));
+
+                // 追加: プリセットクラス
+                if let Some((ranges, neg)) = predefined_class(esc) {
+                    out.push(Token::Class { ranges, neg });
+                    i += 1;
+                    continue;
+                }
+
+                // 制御系のショートエスケープ
+                match esc {
+                    b't' => out.push(Token::Char(b'\t')),
+                    b'n' => out.push(Token::Char(b'\n')),
+                    b'r' => out.push(Token::Char(b'\r')),
+                    // ここで \. \* \+ \? \| \( \) \[ \] \\ などは
+                    // 「その文字をリテラルとして扱う」= Char でOK
+                    other => out.push(Token::Char(other)),
+                }
                 i += 1;
             }
             '.' => {
@@ -61,7 +125,7 @@ pub(crate) fn tokenize(pattern: &str) -> Result<Vec<Token>, Error> {
                 i += 1;
             }
             '[' => {
-                let (token, j) = parse_class(bytes, i + 1)?;
+                let (token, j) = parse_class(bytes, i + 1)?; // 既存
                 out.push(token);
                 i = j;
             }

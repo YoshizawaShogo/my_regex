@@ -5,7 +5,7 @@ use crate::token::Token;
 // ===== 公開API =====
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate)  enum Label {
+pub(crate) enum Label {
     /// ε-遷移
     Eps,
     /// 単一バイト一致
