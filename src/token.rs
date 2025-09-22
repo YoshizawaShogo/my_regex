@@ -12,6 +12,9 @@ pub(crate) enum Token {
     Qmark,    // ?
     Class { ranges: Vec<(u8, u8)>, neg: bool },
     Concat, // implicit concatenation
+
+    CapStart(usize),
+    CapEnd(usize),
 }
 
 // ===== Lexer =====
@@ -170,4 +173,207 @@ fn parse_class(bytes: &[u8], mut i: usize) -> Result<(Token, usize), Error> {
     }
 
     err(ErrorKind::UnbalancedClass, i)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ちょい便利: クラスのrangeを短く書く
+    fn r(a: u8, b: u8) -> (u8, u8) { (a, b) }
+
+    #[test]
+    fn literal_and_metachars() {
+        let got = tokenize("ab.c|()").unwrap();
+        assert_eq!(
+            got,
+            vec![
+                Token::Char(b'a'),
+                Token::Char(b'b'),
+                Token::Dot,
+                Token::Char(b'c'),
+                Token::Alt,
+                Token::LParen,
+                Token::RParen,
+            ]
+        );
+    }
+
+    #[test]
+    fn quantifiers() {
+        let got = tokenize("a*+?").unwrap();
+        assert_eq!(
+            got,
+            vec![
+                Token::Char(b'a'),
+                Token::Star,
+                Token::Plus,
+                Token::Qmark,
+            ]
+        );
+    }
+
+    #[test]
+    fn simple_escapes_and_literal_escapes() {
+        let got = tokenize(r"\t\n\r\.\*\+\?\|\(\)\[\]\\X").unwrap();
+        assert_eq!(
+            got,
+            vec![
+                Token::Char(b'\t'),
+                Token::Char(b'\n'),
+                Token::Char(b'\r'),
+                Token::Char(b'.'),
+                Token::Char(b'*'),
+                Token::Char(b'+'),
+                Token::Char(b'?'),
+                Token::Char(b'|'),
+                Token::Char(b'('),
+                Token::Char(b')'),
+                Token::Char(b'['),
+                Token::Char(b']'),
+                Token::Char(b'\\'),
+                Token::Char(b'X'),
+            ]
+        );
+    }
+
+    #[test]
+    fn presets_digit_space_word_positive() {
+        let got = tokenize(r"\d\s\w").unwrap();
+        assert_eq!(
+            got,
+            vec![
+                Token::Class { ranges: vec![r(b'0', b'9')], neg: false },
+                Token::Class { ranges: vec![
+                    r(b' ', b' '), r(b'\t', b'\t'), r(b'\n', b'\n'),
+                    r(b'\r', b'\r'), r(0x0B, 0x0B), r(0x0C, 0x0C)
+                ], neg: false },
+                Token::Class { ranges: vec![
+                    r(b'0', b'9'), r(b'A', b'Z'), r(b'a', b'z'), r(b'_', b'_')
+                ], neg: false },
+            ]
+        );
+    }
+
+    #[test]
+    fn presets_digit_space_word_negative() {
+        let got = tokenize(r"\D\S\W").unwrap();
+        assert_eq!(
+            got,
+            vec![
+                Token::Class { ranges: vec![r(b'0', b'9')], neg: true },
+                Token::Class { ranges: vec![
+                    r(b' ', b' '), r(b'\t', b'\t'), r(b'\n', b'\n'),
+                    r(b'\r', b'\r'), r(0x0B, 0x0B), r(0x0C, 0x0C)
+                ], neg: true },
+                Token::Class { ranges: vec![
+                    r(b'0', b'9'), r(b'A', b'Z'), r(b'a', b'z'), r(b'_', b'_')
+                ], neg: true },
+            ]
+        );
+    }
+
+    #[test]
+    fn char_class_singletons() {
+        let got = tokenize("[abc]").unwrap();
+        assert_eq!(
+            got,
+            vec![
+                Token::Class { ranges: vec![r(b'a', b'a'), r(b'b', b'b'), r(b'c', b'c')], neg: false }
+            ]
+        );
+    }
+
+    #[test]
+    fn char_class_ranges_and_singletons_mixed() {
+        let got = tokenize("[a-cx-z0-9_]").unwrap();
+        assert_eq!(
+            got,
+            vec![
+                Token::Class { ranges: vec![
+                    r(b'a', b'c'),
+                    r(b'x', b'z'),
+                    r(b'0', b'9'),
+                    r(b'_', b'_'),
+                ], neg: false }
+            ]
+        );
+    }
+
+    #[test]
+    fn negated_char_class() {
+        let got = tokenize("[^a-z]").unwrap();
+        assert_eq!(
+            got,
+            vec![
+                Token::Class { ranges: vec![r(b'a', b'z')], neg: true }
+            ]
+        );
+    }
+
+    #[test]
+    fn dot_and_alt_with_groups_and_class() {
+        let got = tokenize("(ab|c.)[0-9]").unwrap();
+        assert_eq!(
+            got,
+            vec![
+                Token::LParen,
+                Token::Char(b'a'),
+                Token::Char(b'b'),
+                Token::Alt,
+                Token::Char(b'c'),
+                Token::Dot,
+                Token::RParen,
+                Token::Class { ranges: vec![r(b'0', b'9')], neg: false },
+            ]
+        );
+    }
+
+    #[test]
+    fn trailing_backslash_is_error() {
+        let err = tokenize("\\").unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::UnexpectedEof));
+    }
+
+    #[test]
+    fn unbalanced_class_is_error() {
+        let err = tokenize("[abc").unwrap_err();
+        assert!(matches!(err.kind, ErrorKind::UnbalancedClass));
+    }
+
+    // 端ケース: [a-] と [-a] の扱い
+    // 実装は「'-' の直後が ']' でなければ範囲扱い」なので、
+    // [-a] -> '-' 単体 + 'a' 単体, [a-] -> 'a' 単体 + '-' 単体 になることを確認
+    #[test]
+    fn class_dash_edge_cases() {
+        let got1 = tokenize("[-a]").unwrap();
+        assert_eq!(
+            got1,
+            vec![Token::Class { ranges: vec![r(b'-', b'-'), r(b'a', b'a')], neg: false }]
+        );
+        let got2 = tokenize("[a-]").unwrap();
+        assert_eq!(
+            got2,
+            vec![Token::Class { ranges: vec![r(b'a', b'a'), r(b'-', b'-')], neg: false }]
+        );
+    }
+
+    // プリセットとクラスの混在（トークナイザ段階では分割トークンの並びになる）
+    #[test]
+    fn presets_mix_with_literals_and_ops() {
+        let got = tokenize(r"\w+\s*\d").unwrap();
+        assert_eq!(
+            got,
+            vec![
+                Token::Class { ranges: vec![r(b'0', b'9'), r(b'A', b'Z'), r(b'a', b'z'), r(b'_', b'_')], neg: false },
+                Token::Plus,
+                Token::Class { ranges: vec![
+                    r(b' ', b' '), r(b'\t', b'\t'), r(b'\n', b'\n'),
+                    r(b'\r', b'\r'), r(0x0B, 0x0B), r(0x0C, 0x0C)
+                ], neg: false },
+                Token::Star,
+                Token::Class { ranges: vec![r(b'0', b'9')], neg: false },
+            ]
+        );
+    }
 }
