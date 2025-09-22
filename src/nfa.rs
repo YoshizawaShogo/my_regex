@@ -317,7 +317,9 @@ mod nfa_tests {
         let nfa = make_nfa("a*");
         // star 構造なので、εループが含まれる
         let has_loop = nfa.states.iter().any(|st| {
-            st.edges.iter().any(|(l, to)| matches!(l, Label::Eps) && st.edges.iter().any(|(_, t2)| t2 == to))
+            st.edges
+                .iter()
+                .any(|(l, to)| matches!(l, Label::Eps) && st.edges.iter().any(|(_, t2)| t2 == to))
         });
         assert!(has_loop, "should contain epsilon loop");
     }
@@ -326,9 +328,10 @@ mod nfa_tests {
     fn plus_nfa() {
         let nfa = make_nfa("a+");
         // プラスなので、a が最低1回は現れる
-        let has_a = nfa.states.iter().any(|st| {
-            st.edges.iter().any(|(l, _)| matches!(l, Label::Byte(b'a')))
-        });
+        let has_a = nfa
+            .states
+            .iter()
+            .any(|st| st.edges.iter().any(|(l, _)| matches!(l, Label::Byte(b'a'))));
         assert!(has_a);
     }
 
@@ -382,4 +385,3 @@ mod nfa_tests {
         assert!(matches!(err.kind, ErrorKind::UnexpectedToken(_)));
     }
 }
-

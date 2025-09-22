@@ -180,7 +180,9 @@ mod tests {
     use super::*;
 
     // ちょい便利: クラスのrangeを短く書く
-    fn r(a: u8, b: u8) -> (u8, u8) { (a, b) }
+    fn r(a: u8, b: u8) -> (u8, u8) {
+        (a, b)
+    }
 
     #[test]
     fn literal_and_metachars() {
@@ -204,12 +206,7 @@ mod tests {
         let got = tokenize("a*+?").unwrap();
         assert_eq!(
             got,
-            vec![
-                Token::Char(b'a'),
-                Token::Star,
-                Token::Plus,
-                Token::Qmark,
-            ]
+            vec![Token::Char(b'a'), Token::Star, Token::Plus, Token::Qmark,]
         );
     }
 
@@ -243,14 +240,25 @@ mod tests {
         assert_eq!(
             got,
             vec![
-                Token::Class { ranges: vec![r(b'0', b'9')], neg: false },
-                Token::Class { ranges: vec![
-                    r(b' ', b' '), r(b'\t', b'\t'), r(b'\n', b'\n'),
-                    r(b'\r', b'\r'), r(0x0B, 0x0B), r(0x0C, 0x0C)
-                ], neg: false },
-                Token::Class { ranges: vec![
-                    r(b'0', b'9'), r(b'A', b'Z'), r(b'a', b'z'), r(b'_', b'_')
-                ], neg: false },
+                Token::Class {
+                    ranges: vec![r(b'0', b'9')],
+                    neg: false
+                },
+                Token::Class {
+                    ranges: vec![
+                        r(b' ', b' '),
+                        r(b'\t', b'\t'),
+                        r(b'\n', b'\n'),
+                        r(b'\r', b'\r'),
+                        r(0x0B, 0x0B),
+                        r(0x0C, 0x0C)
+                    ],
+                    neg: false
+                },
+                Token::Class {
+                    ranges: vec![r(b'0', b'9'), r(b'A', b'Z'), r(b'a', b'z'), r(b'_', b'_')],
+                    neg: false
+                },
             ]
         );
     }
@@ -261,14 +269,25 @@ mod tests {
         assert_eq!(
             got,
             vec![
-                Token::Class { ranges: vec![r(b'0', b'9')], neg: true },
-                Token::Class { ranges: vec![
-                    r(b' ', b' '), r(b'\t', b'\t'), r(b'\n', b'\n'),
-                    r(b'\r', b'\r'), r(0x0B, 0x0B), r(0x0C, 0x0C)
-                ], neg: true },
-                Token::Class { ranges: vec![
-                    r(b'0', b'9'), r(b'A', b'Z'), r(b'a', b'z'), r(b'_', b'_')
-                ], neg: true },
+                Token::Class {
+                    ranges: vec![r(b'0', b'9')],
+                    neg: true
+                },
+                Token::Class {
+                    ranges: vec![
+                        r(b' ', b' '),
+                        r(b'\t', b'\t'),
+                        r(b'\n', b'\n'),
+                        r(b'\r', b'\r'),
+                        r(0x0B, 0x0B),
+                        r(0x0C, 0x0C)
+                    ],
+                    neg: true
+                },
+                Token::Class {
+                    ranges: vec![r(b'0', b'9'), r(b'A', b'Z'), r(b'a', b'z'), r(b'_', b'_')],
+                    neg: true
+                },
             ]
         );
     }
@@ -278,9 +297,10 @@ mod tests {
         let got = tokenize("[abc]").unwrap();
         assert_eq!(
             got,
-            vec![
-                Token::Class { ranges: vec![r(b'a', b'a'), r(b'b', b'b'), r(b'c', b'c')], neg: false }
-            ]
+            vec![Token::Class {
+                ranges: vec![r(b'a', b'a'), r(b'b', b'b'), r(b'c', b'c')],
+                neg: false
+            }]
         );
     }
 
@@ -289,14 +309,10 @@ mod tests {
         let got = tokenize("[a-cx-z0-9_]").unwrap();
         assert_eq!(
             got,
-            vec![
-                Token::Class { ranges: vec![
-                    r(b'a', b'c'),
-                    r(b'x', b'z'),
-                    r(b'0', b'9'),
-                    r(b'_', b'_'),
-                ], neg: false }
-            ]
+            vec![Token::Class {
+                ranges: vec![r(b'a', b'c'), r(b'x', b'z'), r(b'0', b'9'), r(b'_', b'_'),],
+                neg: false
+            }]
         );
     }
 
@@ -305,9 +321,10 @@ mod tests {
         let got = tokenize("[^a-z]").unwrap();
         assert_eq!(
             got,
-            vec![
-                Token::Class { ranges: vec![r(b'a', b'z')], neg: true }
-            ]
+            vec![Token::Class {
+                ranges: vec![r(b'a', b'z')],
+                neg: true
+            }]
         );
     }
 
@@ -324,7 +341,10 @@ mod tests {
                 Token::Char(b'c'),
                 Token::Dot,
                 Token::RParen,
-                Token::Class { ranges: vec![r(b'0', b'9')], neg: false },
+                Token::Class {
+                    ranges: vec![r(b'0', b'9')],
+                    neg: false
+                },
             ]
         );
     }
@@ -349,12 +369,18 @@ mod tests {
         let got1 = tokenize("[-a]").unwrap();
         assert_eq!(
             got1,
-            vec![Token::Class { ranges: vec![r(b'-', b'-'), r(b'a', b'a')], neg: false }]
+            vec![Token::Class {
+                ranges: vec![r(b'-', b'-'), r(b'a', b'a')],
+                neg: false
+            }]
         );
         let got2 = tokenize("[a-]").unwrap();
         assert_eq!(
             got2,
-            vec![Token::Class { ranges: vec![r(b'a', b'a'), r(b'-', b'-')], neg: false }]
+            vec![Token::Class {
+                ranges: vec![r(b'a', b'a'), r(b'-', b'-')],
+                neg: false
+            }]
         );
     }
 
@@ -365,14 +391,27 @@ mod tests {
         assert_eq!(
             got,
             vec![
-                Token::Class { ranges: vec![r(b'0', b'9'), r(b'A', b'Z'), r(b'a', b'z'), r(b'_', b'_')], neg: false },
+                Token::Class {
+                    ranges: vec![r(b'0', b'9'), r(b'A', b'Z'), r(b'a', b'z'), r(b'_', b'_')],
+                    neg: false
+                },
                 Token::Plus,
-                Token::Class { ranges: vec![
-                    r(b' ', b' '), r(b'\t', b'\t'), r(b'\n', b'\n'),
-                    r(b'\r', b'\r'), r(0x0B, 0x0B), r(0x0C, 0x0C)
-                ], neg: false },
+                Token::Class {
+                    ranges: vec![
+                        r(b' ', b' '),
+                        r(b'\t', b'\t'),
+                        r(b'\n', b'\n'),
+                        r(b'\r', b'\r'),
+                        r(0x0B, 0x0B),
+                        r(0x0C, 0x0C)
+                    ],
+                    neg: false
+                },
                 Token::Star,
-                Token::Class { ranges: vec![r(b'0', b'9')], neg: false },
+                Token::Class {
+                    ranges: vec![r(b'0', b'9')],
+                    neg: false
+                },
             ]
         );
     }

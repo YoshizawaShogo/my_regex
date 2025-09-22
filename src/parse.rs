@@ -42,7 +42,9 @@ pub(crate) fn insert_concat(tokens: &[Token]) -> Vec<Token> {
 
 /// 中置トークン列（※Concat 済み想定）を後置記法へ
 pub(crate) fn to_postfix(tokens: &[Token]) -> Result<Vec<Token>, Error> {
-    fn is_bin_op(t: &Token) -> bool { matches!(t, Token::Concat | Token::Alt) }
+    fn is_bin_op(t: &Token) -> bool {
+        matches!(t, Token::Concat | Token::Alt)
+    }
     fn precedence(op: &Token) -> u8 {
         match op {
             Token::Concat => 2,
@@ -61,9 +63,9 @@ pub(crate) fn to_postfix(tokens: &[Token]) -> Result<Vec<Token>, Error> {
     let mut out: Vec<Token> = Vec::with_capacity(tokens.len());
     let mut operator_stack: Vec<(Op, usize)> = Vec::new(); // (op, pos)
 
-    let mut last_was_operand = false;   // 直前が「オペランド（または単項後置適用後）」か
-    let mut last_was_quant   = false;   // 直前が量指定子（*,+,?）か
-    let mut next_group_id: usize = 1;   // 1-origin
+    let mut last_was_operand = false; // 直前が「オペランド（または単項後置適用後）」か
+    let mut last_was_quant = false; // 直前が量指定子（*,+,?）か
+    let mut next_group_id: usize = 1; // 1-origin
 
     for (i, t) in tokens.iter().cloned().enumerate() {
         match t {
@@ -71,12 +73,13 @@ pub(crate) fn to_postfix(tokens: &[Token]) -> Result<Vec<Token>, Error> {
             Token::Char(_) | Token::Dot | Token::Class { .. } => {
                 out.push(t);
                 last_was_operand = true;
-                last_was_quant   = false;
+                last_was_quant = false;
             }
 
             // ===== 括弧（キャプチャ） =====
             Token::LParen => {
-                let gid = next_group_id; next_group_id += 1;
+                let gid = next_group_id;
+                next_group_id += 1;
                 // 開いた瞬間に CapStart を出力しておく
                 out.push(Token::CapStart(gid));
                 // この時点の out.len() を記録（中身の有無判定に使う）
@@ -84,13 +87,16 @@ pub(crate) fn to_postfix(tokens: &[Token]) -> Result<Vec<Token>, Error> {
                 operator_stack.push((Op::LParen { gid, mark }, i));
                 // 直後に量指定子を許可するため operand=true にする
                 last_was_operand = true;
-                last_was_quant   = false;
+                last_was_quant = false;
             }
             Token::RParen => {
                 // '(' まで演算子を出力
                 let (gid, mark) = loop {
                     let Some((top, _pos_top)) = operator_stack.pop() else {
-                        return Err(Error { kind: ErrorKind::UnbalancedParen, pos: i });
+                        return Err(Error {
+                            kind: ErrorKind::UnbalancedParen,
+                            pos: i,
+                        });
                     };
                     match top {
                         Op::LParen { gid, mark } => break (gid, mark),
@@ -114,22 +120,28 @@ pub(crate) fn to_postfix(tokens: &[Token]) -> Result<Vec<Token>, Error> {
                 }
 
                 last_was_operand = true; // () 全体で1オペランド
-                last_was_quant   = false;
+                last_was_quant = false;
             }
 
             // ===== 単項後置（量指定子） =====
             Token::Star | Token::Plus | Token::Qmark => {
                 if !last_was_operand {
                     // 例: "*a" / "|*" / "(*" など
-                    return Err(Error { kind: ErrorKind::DanglingQuantifier, pos: i });
+                    return Err(Error {
+                        kind: ErrorKind::DanglingQuantifier,
+                        pos: i,
+                    });
                 }
                 if last_was_quant {
                     // 例: "a**", "a+?" 等をエラーにする
-                    return Err(Error { kind: ErrorKind::DanglingQuantifier, pos: i });
+                    return Err(Error {
+                        kind: ErrorKind::DanglingQuantifier,
+                        pos: i,
+                    });
                 }
                 out.push(t);
-                last_was_operand = true;  // 「オペランド1個分」は維持
-                last_was_quant   = true;  // 直後の量指定子連鎖を禁止
+                last_was_operand = true; // 「オペランド1個分」は維持
+                last_was_quant = true; // 直後の量指定子連鎖を禁止
             }
 
             // ===== 二項（左結合） =====
@@ -146,7 +158,7 @@ pub(crate) fn to_postfix(tokens: &[Token]) -> Result<Vec<Token>, Error> {
                 }
                 operator_stack.push((Op::Bin(t), i));
                 last_was_operand = false;
-                last_was_quant   = false;
+                last_was_quant = false;
             }
             // ここには来ない
             Token::CapStart(_) | Token::CapEnd(_) => {
@@ -160,7 +172,12 @@ pub(crate) fn to_postfix(tokens: &[Token]) -> Result<Vec<Token>, Error> {
     // 残りを出力
     while let Some((op, pos)) = operator_stack.pop() {
         match op {
-            Op::LParen { .. } => return Err(Error { kind: ErrorKind::UnbalancedParen, pos }),
+            Op::LParen { .. } => {
+                return Err(Error {
+                    kind: ErrorKind::UnbalancedParen,
+                    pos,
+                });
+            }
             Op::Bin(b) => out.push(b),
         }
     }
@@ -200,16 +217,16 @@ mod parse_tests {
         use Token::*;
         ts.iter()
             .map(|t| match t {
-                Char(_)      => "c",
-                Dot          => ".",
+                Char(_) => "c",
+                Dot => ".",
                 Class { .. } => "[",
-                Star         => "*",
-                Plus         => "+",
-                Qmark        => "?",
-                Concat       => "·",
-                Alt          => "|",
-                CapStart(_)  => "S",
-                CapEnd(_)    => "E",
+                Star => "*",
+                Plus => "+",
+                Qmark => "?",
+                Concat => "·",
+                Alt => "|",
+                CapStart(_) => "S",
+                CapEnd(_) => "E",
                 LParen | RParen => unreachable!("Paren should not remain after RPN"),
             })
             .collect::<Vec<_>>()
@@ -233,7 +250,15 @@ mod parse_tests {
         // L/RParen はそのまま残り、Concat が適切に挿入されること
         assert_eq!(
             got,
-            vec![Char(b'a'), Concat, LParen, Char(b'b'), RParen, Concat, Char(b'c')]
+            vec![
+                Char(b'a'),
+                Concat,
+                LParen,
+                Char(b'b'),
+                RParen,
+                Concat,
+                Char(b'c')
+            ]
         );
     }
 

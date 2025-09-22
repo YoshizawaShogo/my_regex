@@ -113,69 +113,78 @@ impl Regex {
 
     // ===== 実行器（NFAシミュレーション with captures） =====
 
+    fn run(&self, bytes: &[u8]) -> Option<(usize, Vec<GroupSlot>)> {
+        let n = bytes.len();
 
-fn run(&self, bytes: &[u8]) -> Option<(usize, Vec<GroupSlot>)> {
-    let n = bytes.len();
+        let mut curr = vec![Thread {
+            s: self.start,
+            caps: vec![(None, None); self.groups + 1],
+        }];
+        self.eps_closure(&mut curr, 0);
 
-    let mut curr = vec![Thread {
-        s: self.start,
-        caps: vec![(None, None); self.groups + 1],
-    }];
-    self.eps_closure(&mut curr, 0);
+        let mut last: Option<(usize, Vec<GroupSlot>)> = None;
 
-    let mut last: Option<(usize, Vec<GroupSlot>)> = None;
-
-    let mut i = 0usize;
-    while i <= n {
-        // 受理チェック：全受理スレッドからベターなものを選ぶ
-        for t in curr.iter().filter(|t| t.s == self.accept) {
-            let cand = (i, t.caps.clone());
-            if let Some(best) = &mut last {
-                if better_choice(&cand, best) {
-                    *best = cand;
+        let mut i = 0usize;
+        while i <= n {
+            // 受理チェック：全受理スレッドからベターなものを選ぶ
+            for t in curr.iter().filter(|t| t.s == self.accept) {
+                let cand = (i, t.caps.clone());
+                if let Some(best) = &mut last {
+                    if better_choice(&cand, best) {
+                        *best = cand;
+                    }
+                } else {
+                    last = Some(cand);
                 }
-            } else {
-                last = Some(cand);
             }
-        }
 
-        if i == n { break; }
+            if i == n {
+                break;
+            }
 
-        let b = bytes[i];
-        let mut next: Vec<Thread> = Vec::new();
+            let b = bytes[i];
+            let mut next: Vec<Thread> = Vec::new();
 
-        for thr in &curr {
-            for (lbl, tgt) in &self.states[thr.s].edges {
-                match lbl {
-                    Label::Byte(c) if *c == b => {
-                        next.push(Thread { s: *tgt, caps: thr.caps.clone() });
-                    }
-                    Label::Any => {
-                        next.push(Thread { s: *tgt, caps: thr.caps.clone() });
-                    }
-                    Label::Class { ranges, neg } => {
-                        let hit = ranges.iter().any(|&(lo, hi)| lo <= b && b <= hi);
-                        if (*neg && !hit) || (!*neg && hit) {
-                            next.push(Thread { s: *tgt, caps: thr.caps.clone() });
+            for thr in &curr {
+                for (lbl, tgt) in &self.states[thr.s].edges {
+                    match lbl {
+                        Label::Byte(c) if *c == b => {
+                            next.push(Thread {
+                                s: *tgt,
+                                caps: thr.caps.clone(),
+                            });
                         }
+                        Label::Any => {
+                            next.push(Thread {
+                                s: *tgt,
+                                caps: thr.caps.clone(),
+                            });
+                        }
+                        Label::Class { ranges, neg } => {
+                            let hit = ranges.iter().any(|&(lo, hi)| lo <= b && b <= hi);
+                            if (*neg && !hit) || (!*neg && hit) {
+                                next.push(Thread {
+                                    s: *tgt,
+                                    caps: thr.caps.clone(),
+                                });
+                            }
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
+
+            if next.is_empty() {
+                break;
+            }
+
+            self.eps_closure(&mut next, i + 1);
+            curr = dedup_threads(next);
+            i += 1;
         }
 
-        if next.is_empty() {
-            break;
-        }
-
-        self.eps_closure(&mut next, i + 1);
-        curr = dedup_threads(next);
-        i += 1;
+        last
     }
-
-    last
-}
-
 
     /// ε・CapBegin・CapEnd を辿って集合を閉じる。
     /// `pos` は「いまの入力位置」（Cap記録に使う）。
@@ -317,7 +326,8 @@ mod tests {
     // 追加テスト用ヘルパ：captures を取り出す
     fn mc(p: &str, s: &str) -> Option<Vec<Option<String>>> {
         let re = Regex::new(p).expect("Regex::new failed");
-        re.captures(s).map(|v| v.into_iter().map(|o| o.map(|z| z.to_string())).collect())
+        re.captures(s)
+            .map(|v| v.into_iter().map(|o| o.map(|z| z.to_string())).collect())
     }
 
     // ========= ここから追加テスト =========
@@ -413,7 +423,7 @@ mod tests {
         assert_eq!(got.len(), 1 + 2); // [0]全体 + 2 groups
         assert_eq!(got[0], Some("abc".into()));
         assert_eq!(got[1], Some("abc".into())); // 外側
-        assert_eq!(got[2], Some("b".into()));   // 内側
+        assert_eq!(got[2], Some("b".into())); // 内側
     }
 
     #[test]
@@ -497,7 +507,7 @@ mod nfa_capture_cut_tests {
     use super::*;
     use crate::nfa::Nfa;
     use crate::parse::{insert_concat, to_postfix};
-    use crate::token::{tokenize, Token};
+    use crate::token::{Token, tokenize};
     use std::collections::VecDeque;
 
     fn make_postfix(pat: &str) -> Vec<Token> {
@@ -517,16 +527,16 @@ mod nfa_capture_cut_tests {
         use crate::token::Token::*;
         ts.iter()
             .map(|t| match t {
-                Char(_)      => "c",
-                Dot          => ".",
+                Char(_) => "c",
+                Dot => ".",
                 Class { .. } => "[",
-                Star         => "*",
-                Plus         => "+",
-                Qmark        => "?",
-                Concat       => "·",
-                Alt          => "|",
-                CapStart(_)  => "S",
-                CapEnd(_)    => "E",
+                Star => "*",
+                Plus => "+",
+                Qmark => "?",
+                Concat => "·",
+                Alt => "|",
+                CapStart(_) => "S",
+                CapEnd(_) => "E",
                 LParen | RParen => unreachable!("Paren should not appear in postfix"),
             })
             .collect::<Vec<_>>()
@@ -546,8 +556,8 @@ mod nfa_capture_cut_tests {
         // キーとなる部分列が含まれているかで確認
         let s = sym(&p);
         assert!(s.contains("S [ + · E ·"), "missing (\\w+) block: {s}");
-        assert!(s.contains("[ + ·"),        "missing \\s+ block: {s}");
-        assert!(s.contains("S . + · E ·"),  "missing (.+) block: {s}");
+        assert!(s.contains("[ + ·"), "missing \\s+ block: {s}");
+        assert!(s.contains("S . + · E ·"), "missing (.+) block: {s}");
     }
 
     #[test]
@@ -563,17 +573,18 @@ mod nfa_capture_cut_tests {
             for (lbl, _) in &st.edges {
                 match lbl {
                     Label::CapBegin(_) => cb += 1,
-                    Label::CapEnd(_)   => ce += 1,
+                    Label::CapEnd(_) => ce += 1,
                     Label::Class { ranges, neg } => {
                         // \w: [0-9A-Za-z_]
-                        if !*neg && ranges.iter().any(|&(a,b)| a==b'0' && b==b'9') &&
-                                   ranges.iter().any(|&(a,b)| a==b'A' && b==b'Z') &&
-                                   ranges.iter().any(|&(a,b)| a==b'a' && b==b'z')
+                        if !*neg
+                            && ranges.iter().any(|&(a, b)| a == b'0' && b == b'9')
+                            && ranges.iter().any(|&(a, b)| a == b'A' && b == b'Z')
+                            && ranges.iter().any(|&(a, b)| a == b'a' && b == b'z')
                         {
                             has_w = true;
                         }
                         // \s: space を含む
-                        if !*neg && ranges.iter().any(|&(a,b)| a==b' ' && b==b' ') {
+                        if !*neg && ranges.iter().any(|&(a, b)| a == b' ' && b == b' ') {
                             has_s = true;
                         }
                     }
@@ -585,8 +596,8 @@ mod nfa_capture_cut_tests {
 
         assert_eq!(cb, 2, "CapBegin should appear twice, got {cb}");
         assert_eq!(ce, 2, "CapEnd should appear twice, got {ce}");
-        assert!(has_w,   "NFA should contain \\w class");
-        assert!(has_s,   "NFA should contain \\s class");
+        assert!(has_w, "NFA should contain \\w class");
+        assert!(has_s, "NFA should contain \\s class");
         assert!(has_dot, "NFA should contain '.' Any");
     }
 
@@ -598,18 +609,18 @@ mod nfa_capture_cut_tests {
 
         // CapBegin(1) と CapEnd(1) の「エッジ」を集める
         let mut begin_targets: Vec<usize> = vec![]; // CapBegin(1) を踏んだ「遷移先状態」
-        let mut end_sources: Vec<usize>   = vec![]; // CapEnd(1) の「遷移元状態」
+        let mut end_sources: Vec<usize> = vec![]; // CapEnd(1) の「遷移元状態」
         for (sid, st) in nfa.states.iter().enumerate() {
             for (lbl, to) in &st.edges {
                 match lbl {
                     Label::CapBegin(g) if *g == 1 => begin_targets.push(*to),
-                    Label::CapEnd(g)   if *g == 1 => end_sources.push(sid),
+                    Label::CapEnd(g) if *g == 1 => end_sources.push(sid),
                     _ => {}
                 }
             }
         }
         assert!(!begin_targets.is_empty(), "CapBegin(1) not found");
-        assert!(!end_sources.is_empty(),   "CapEnd(1) not found");
+        assert!(!end_sources.is_empty(), "CapEnd(1) not found");
 
         // ε/Cap のみで到達できるかを BFS で調べる
         // 到達「先」は CapEnd(1) の“遷移元”状態（= その状態に着いた時点で CapEnd を踏める）
